@@ -1,0 +1,199 @@
+---
+title: "MIS 510 Portfolio Project Option 1"
+author: "Dan Amrine"
+date: "September 4, 2019"
+output:
+  word_document: 
+      highlight: NULL
+  html_document:
+    df_print: paged
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,dev = "jpeg")
+```
+
+```{r Reviewing the Data}
+setwd("C:/Users/dca80/Desktop/DATA/R_DATA")
+#Read the data into the project
+credit<-as.data.frame(read.csv("GermanCredit.csv"))
+#view the strucutre of the dataset
+str(credit)
+# generate 5 statistics to help understand the  numeric data
+data.frame(mean=sapply(credit[,c(3,11,23)],mean),
+          sd = sapply(credit[,c(3,11,23)],sd),
+          max = sapply(credit[,c(3,11,23)],max),
+          min = sapply(credit[,c(3,11,23)],min),
+          median = sapply(credit[,c(3,11,23)],median))
+
+#notice the mean duration of the loans are 20 months
+# the mean amount is 3,271 DM or $1,850 USD
+# the mean age of applicant is 35 years.
+
+#look at the count of Response where 1 is good credit rating and 0 is bad.
+# there were 700 applicants with a good response and 300 with a bad response.
+```
+```{r echo=FALSE}
+library(plyr)
+credit$BGCREDIT<-ifelse(credit$RESPONSE==1,"Yes","No")
+good_credit.count<-ldply(credit,function(c) sum(c=="Yes"))
+bad_credit.count<-ldply(credit,function(c) sum(c=="No"))
+
+credit_reponse<-data.frame("Response" = c("Yes","No"),"Count" = c(700,300),stringsAsFactors = FALSE)
+barplot(credit_reponse$Count, main = "Credit Response for 1000 Applicants", ylab = "Number of Applicants",names.arg = c("Yes","No"),col = "Blue")
+```
+    
+```{r FinalProjectPrediction}
+## in the next section we will be predicting the response based on 30 
+## predictors. 
+## we will use random forest and a nueral network
+
+# The first step is to seperate the data into a validation and training sets.
+set.seed(1)
+train.index<-sample(c(1:dim(credit)[1]), dim(credit)[1]*0.6)
+traincrd.df<- credit[train.index,]
+validcrd.df<- credit[-train.index, ]
+
+#once the training and validations sets are defined we can run the random forest and neuralnet.
+#Load all necessary packages for confusion matrix and classifiation trees
+library(caret)
+library(dplyr)
+library(rpart)
+library(rpart.plot)
+#convert all 0,1 in training and validation sets into no and yes
+traincrd.factor<-traincrd.df[ ,c("NEW_CAR","USED_CAR","FURNITURE","RADIO.TV","EDUCATION","RETRAINING","MALE_DIV","MALE_SINGLE","MALE_MAR_or_WID","CO.APPLICANT","GUARANTOR","REAL_ESTATE","PROP_UNKN_NONE","OTHER_INSTALL","RENT","OWN_RES","TELEPHONE","FOREIGN","RESPONSE")]
+#Convert "0" and "1" to "No" and "Yes"
+traincrd.factor.yes<-lapply(traincrd.factor,factor,levels= c(0,1), labels =c("No","Yes"))
+# for validation set
+validcrd.factor<-validcrd.df[ ,c("NEW_CAR","USED_CAR","FURNITURE","RADIO.TV","EDUCATION","RETRAINING","MALE_DIV","MALE_SINGLE","MALE_MAR_or_WID","CO.APPLICANT","GUARANTOR","REAL_ESTATE","PROP_UNKN_NONE","OTHER_INSTALL","RENT","OWN_RES","TELEPHONE","FOREIGN","RESPONSE")]
+#Convert "0" and "1" to "No" and "Yes"
+validcrd.factor.yes<-lapply(validcrd.factor,factor,levels= c(0,1), labels =c("No","Yes"))
+
+#create the training classification tree
+credit.ct<-rpart(RESPONSE ~ .,data = traincrd.factor.yes,method = "class",model=TRUE)
+#plot the training classification tree
+prp(credit.ct,type = 2, extra = "auto", under = TRUE, split.font = 1, varlen = -10, main = "Yes = Good Credit")
+#create the validation classification tree
+valcredit.ct<-rpart(RESPONSE ~ .,data = validcrd.factor.yes,method = "class",model=TRUE)
+#plot the validation classification tree
+prp(valcredit.ct,type = 2, extra = "auto", under = TRUE, split.font = 1, varlen = -10, main = "Yes = Good Credit")
+# generate the predicted class membership for the training set
+credit.ct.point.pred.train<-predict(credit.ct,traincrd.factor.yes, type = "class")
+#Generate the training confusion matrix for accuracy
+confusionMatrix(credit.ct.point.pred.train,traincrd.factor.yes$RESPONSE)
+# generate the predicted class membership for the validation set
+credit.ct.point.pred.val<-predict(valcredit.ct,validcrd.factor.yes, type = "class")
+#Generate the validation confusion matrix for accuracy
+confusionMatrix(credit.ct.point.pred.val,validcrd.factor.yes$RESPONSE)
+
+#Will now compare using a random forest
+library(randomForest)
+#Generate the random froest on the training set
+credrf<-randomForest(RESPONSE~.,data=traincrd.factor.yes, ntree = 500, mtry=4,nodesize = 5, importance=TRUE)
+#training set varaible importance plot on accuracy
+varImpPlot(credrf, type=1, n.var = 10, main = "Credit Response Random Forest (Accuracy)")
+#training set varaible importance plot on node impurity
+varImpPlot(credrf, type=2, n.var = 10, main = "Credit Response Random Forest (Node Impurity)")
+# Generate the confusion matrix vs. the validation set
+credrf.pred<-predict(credrf,validcrd.factor.yes)
+confusionMatrix(credrf.pred,validcrd.factor.yes$RESPONSE)
+
+### The Neural Net
+#Load necesaary library for neural net.
+library(neuralnet)
+library(nnet)
+# I attempted to think like a bank manager and chose a formula that would predict the amount, duration, and credit rating of the applicant based on key attributes.
+crednn<-neuralnet(RESPONSE~SAV_ACCT+EMPLOYMENT+JOB+OTHER_INSTALL+REAL_ESTATE+RENT,data=traincrd.df, linear.output = F, hidden = 3)
+# display the weights
+crednn$weights
+```
+```{r echo=FALSE}
+#Plot the nueral network
+plot(crednn, rep="best")
+```
+```{r}
+#predicting the training set
+crednn.predict<-compute(crednn,traincrd.df[ ,c("SAV_ACCT","EMPLOYMENT","JOB","OTHER_INSTALL","REAL_ESTATE","RENT")])
+crednn.class <- crednn.predict$net.result
+crednn.class.fac<-ifelse(crednn.class>0.5,"1","0")
+confusionMatrix(as.factor(crednn.class.fac),as.factor(traincrd.df$RESPONSE))
+
+#predicitng the validation set
+vcrednn.predict<-compute(crednn,validcrd.df[ ,c("SAV_ACCT","EMPLOYMENT","JOB","OTHER_INSTALL","REAL_ESTATE","RENT")])
+vcrednn.class <- vcrednn.predict$net.result
+vcrednn.class.fac<-ifelse(vcrednn.class>0.5,"1","0")
+confusionMatrix(as.factor(vcrednn.class.fac),as.factor(validcrd.df$RESPONSE))
+```
+```{r}
+#based on the high error this did not work properly and the #reason is the response is binary but it's predicting 
+#numeric values from 0 to 1. 
+
+#Will have to create a new data set and dummies to run the #network properly. 
+
+# I reduced it to response, savings account, employment, and job.
+
+#### The next Neural Net
+
+#new partition 
+set.seed(2)
+Ctraining = sample(row.names(credit), dim(credit)[1]*0.6)
+Cvalidation = setdiff(row.names(credit), Ctraining)
+
+#list of variables for new data from
+vars=c("RESPONSE","EMPLOYMENT","JOB")
+
+#dummify columns with multiple classes.
+#Remember that if the response is 0 then the new class is 1
+#and if response is 1 then in that dummy class it is also 1. 
+#This process reduces all the classes into binary values using columns
+CtrainData<-cbind(credit[Ctraining,c(vars)],
+                  class.ind(credit[Ctraining,]$RESPONSE),
+                  class.ind(credit[Ctraining,]$EMPLOYMENT),
+                  class.ind(credit[Ctraining,]$JOB))
+names(CtrainData)=c(vars,paste("RESPONSE_",c(0,1), sep = ""),
+                    paste("EMPLOYMENT_",c(0,1,2,3,4), sep = ""),
+                    paste("JOB_",c(0,1,2,3), sep = ""))
+#same process for the validation data
+CvalData<-cbind(credit[Cvalidation,c(vars)],
+                  class.ind(credit[Cvalidation,]$RESPONSE),
+                  class.ind(credit[Cvalidation,]$EMPLOYMENT),
+                  class.ind(credit[Cvalidation,]$JOB))
+names(CvalData)=c(vars,paste("RESPONSE_",c(0,1), sep = ""),
+                    paste("EMPLOYMENT_",c(0,1,2,3,4), sep = ""),
+                    paste("JOB_",c(0,1,2,3), sep = ""))
+
+#created a neural net with 2 hidden nodes
+# used hidden= to specify nodes in each layer
+Cnn<-neuralnet(RESPONSE_1~EMPLOYMENT_0+EMPLOYMENT_1+EMPLOYMENT_2+EMPLOYMENT_3+EMPLOYMENT_4+JOB_0+JOB_1+JOB_2+JOB_3, data=CtrainData, hidden = 3,act.fct = "logistic",linear.output = FALSE)
+Cnn$weights
+
+```
+```{r,fig.align="center",echo=FALSE }
+#plot the neural network 
+plot(Cnn, rep = "best", fontsize = 8,information.pos = 0.1, col.entry = "blue",col.out = "red",radius = 0.2)
+```
+```{r}
+#I had to convert it from a scales of -1 - 1 to 0's and 1's factor class. I used 0.5 
+#for the cutoff between a "1" and "0"
+#Hopefully i am not missing something about the Neural Net reults that makes this invalid.
+
+# confusion matrix for the 2 training results of the model res1 = 0 or bad credit, and res2 = 1 or good credit
+Ctraining.prediction = compute(Cnn,CtrainData[ ,-5])
+Ctraining.class <- Ctraining.prediction$net.result
+Ctraining.class.fac<-ifelse(Ctraining.class>0.5,"1","0")
+confusionMatrix(as.factor(Ctraining.class.fac),as.factor(credit[Ctraining,]$RESPONSE))
+
+
+# confusion matrix for the 2 validation results of the model res1 = 0 or bad credit, and res2 = 1 or good credit
+Cval.prediction = compute(Cnn,CvalData[ ,-5])
+Cval.class <- Cval.prediction$net.result
+Cval.class.fac<-ifelse(Cval.class>0.5,"1","0")
+confusionMatrix(as.factor(Cval.class.fac),as.factor(credit[Cvalidation,]$RESPONSE))
+
+#The Overall model derived from this neural can predict the applicants with good credit with 70% accuracy.
+
+
+
+```
